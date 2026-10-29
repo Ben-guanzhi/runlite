@@ -1,0 +1,19 @@
+runlite — 把本地 Java / Spring Boot / Node 项目跑起来、停下来、看日志
+
+用法:
+  runlite add <目录> [--name n] [--cmd "..."] [--profile p] [--port 8080]
+  runlite list
+  runlite start <项目> [-c 配置] [-wait] [-- 追加参数]
+  runlite stop <项目> [-force]
+  runlite restart <项目> [-c 配置]
+  runlite status [<项目>] [-json]
+  runlite logs <项目> [-n 200] [-f] [-grep 正则]
+  runlite remove <项目>
+  runlite doctor [-refresh] [-json]
+  runlite daemon <start|stop|status|exec>
+  runlite version
+  runlite mcp
+
+项目可用 id、id 前缀、名称或所在目录指定；名称不唯一时会要求改用 id。
+runlite mcp 以 MCP（JSON-RPC over stdio）对外提供同样的动作，供 Agent 接入；
+它自己不留状态，所有动作仍然转给 daemon。
