@@ -205,7 +205,12 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) startProject(w http.ResponseWriter, r *http.Request) {
 	var req service.StartRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	// A malformed body must fail loudly, not silently start with a zero-value
+	// request (addProject already answered 400 for the same shape).
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
 	req.Key = r.PathValue("key")
 	run, err := s.svc.Start(req)
 	if err != nil {
@@ -259,7 +264,10 @@ func (s *Server) stopProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) restartProject(w http.ResponseWriter, r *http.Request) {
 	var req service.StartRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
 	req.Key = r.PathValue("key")
 	run, err := s.svc.Restart(req)
 	if err != nil {
