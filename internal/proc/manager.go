@@ -946,6 +946,12 @@ func pump(r io.Reader, lg *logs.Log, isErr bool) {
 	for sc.Scan() {
 		lg.Append(isErr, sc.Text())
 	}
+	// A Scanner error (a single line over the 1MB buffer) silently ended the
+	// pump: every later line from that pipe vanished with no marker. Surface
+	// the truncation so the log shows where reading stopped.
+	if err := sc.Err(); err != nil {
+		lg.Append(isErr, "— 输出读取中断（单行超过缓冲上限），此后的输出已丢弃: "+err.Error()+" —")
+	}
 }
 
 // buildArgv 把 LaunchConfig 翻译成 argv，不经过 shell（除非目标本身就是 .bat/.cmd，
