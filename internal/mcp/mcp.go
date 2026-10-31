@@ -25,7 +25,10 @@ import (
 const ProtocolVersion = "2024-11-05"
 
 const serverName = "runlite"
-const serverVersion = "0.1.0"
+
+// serverVersion mirrors the API's Version constant — one source of truth, so
+// bumping the version does not leave the MCP serverInfo behind.
+const serverVersion = api.Version
 
 // Backend 是 *api.Client 提供的那组动作；单测用它做替身。
 type Backend interface {
