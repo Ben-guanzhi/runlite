@@ -813,8 +813,16 @@ func (m *Manager) Reclaim() (adopted int, cleared int) {
 	if err != nil {
 		return 0, 0
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// 两段式：读文件与进程探查（PidSame / ListeningPortOf 都是系统调用）
+	// 在锁外完成，m.mu 只圈住最后的记账突变——此前整套系统调用抱着锁，
+	// daemon 重启窗口内 Start/Stop 全被阻塞。
+	type decision struct {
+		path      string
+		info      RunInfo
+		adopt     bool
+		portFound bool
+	}
+	decisions := make([]decision, 0, len(metas))
 	for _, path := range metas {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -826,40 +834,50 @@ func (m *Manager) Reclaim() (adopted int, cleared int) {
 		if err := json.Unmarshal(raw, &info); err != nil || info.ProjectID == "" {
 			continue
 		}
-		// 接管也必须认身份：老记录里的 PID 可能已被系统发给另一个进程，
-		// 把它当"上次留下的项目进程"接管，随后一停就杀到无关程序。
+		// 接管也必须认身份：老记录里的 PID 可能已被系统发给另一个进程。
 		// 先问事实，再看标签：meta 里的 state 只是上一次 daemon 的判断，
 		// 进程可能照旧在跑（本机实测：应用被判"启动超时 failed"，daemon 重启时
 		// 8081 仍在监听）。按标签归档成已结束，等于当场忘掉一个活服务。
 		alive := info.PID != 0 && netx.PidSame(info.PID, info.PidCreated)
+		d := decision{path: path, info: info, adopt: alive}
 		if alive {
-			if _, exists := m.active[info.ProjectID]; exists {
-				continue
-			}
-			info.State = StateOrphan
-			info.Reason = "由上一次 daemon 拉起，进程仍在（pid " + strconv.Itoa(info.PID) + "）；日志管道已随旧进程丢失，只能强制结束"
 			if info.Port == 0 {
 				// 接管进来的运行没有日志管道可查，端口是外界唯一能确认"它还在服务"的证据：
 				// 直接按 PID 反查监听端口补上，否则 list 只会显示一个空列。
 				if ports := netx.ListeningPortOf([]int{info.PID}); len(ports) > 0 {
 					info.Port = ports[0]
-					info.Reason += "；实测监听端口 " + strconv.Itoa(info.Port)
+					d.portFound = true
 				}
+			}
+		} else if info.State.Active() && info.EndedAt.IsZero() {
+			info.EndedAt = time.Now()
+		}
+		decisions = append(decisions, d)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range decisions {
+		info := d.info
+		if d.adopt {
+			if _, exists := m.active[info.ProjectID]; exists {
+				continue
+			}
+			info.State = StateOrphan
+			info.Reason = "由上一次 daemon 拉起，进程仍在（pid " + strconv.Itoa(info.PID) + "）；日志管道已随旧进程丢失，只能强制结束"
+			if d.portFound {
+				info.Reason += "；实测监听端口 " + strconv.Itoa(info.Port)
 			}
 			r := &Run{RunInfo: info} // log/cmd/doneCh 全空：这是一次只能停、不能看日志的接管
 			m.active[info.ProjectID] = r
 			m.pushHistoryLocked(r)
-			_ = os.WriteFile(path, mustJSON(info), 0o600)
+			_ = os.WriteFile(d.path, mustJSON(info), 0o600)
 			adopted++
 			continue
 		}
 		if info.State.Active() {
 			info.State = StateZombie
 			info.Reason = "daemon 重启后发现进程已不存在，无法确认退出码"
-			if info.EndedAt.IsZero() {
-				info.EndedAt = time.Now()
-			}
-			_ = os.WriteFile(path, mustJSON(info), 0o600)
+			_ = os.WriteFile(d.path, mustJSON(info), 0o600)
 			m.pushHistoryLocked(&Run{RunInfo: info})
 			cleared++
 			continue

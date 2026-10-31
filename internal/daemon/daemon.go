@@ -39,6 +39,11 @@ func Spawn(exe string, paths *config.Paths) error {
 	if err := os.MkdirAll(paths.Home, 0o700); err != nil {
 		return err
 	}
+	// The daemon is long-lived by design; without a cap its log only ever
+	// grew. At spawn time an oversized log rotates one generation back.
+	if info, serr := os.Stat(logPath); serr == nil && info.Size() > 5<<20 {
+		_ = os.Rename(logPath, logPath+".old")
+	}
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
