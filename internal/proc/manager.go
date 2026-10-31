@@ -696,8 +696,14 @@ func (m *Manager) Remove(projectID string) {
 	if r, ok := m.active[projectID]; ok && r.State.Active() {
 		r.mu.Lock()
 		r.Stopped = true
+		pid, born := r.PID, r.PidCreated
 		r.mu.Unlock()
-		_ = netx.KillTree(r.PID, true)
+		// The same discipline stopRun follows: the PID may have been reused
+		// (Reclaim took over an orphan and the original died), and taskkill
+		// on a stranger is exactly what the identity checks exist to prevent.
+		if netx.PidSame(pid, born) {
+			_ = netx.KillTree(pid, true)
+		}
 		delete(m.active, projectID)
 	}
 	delete(m.history, projectID)

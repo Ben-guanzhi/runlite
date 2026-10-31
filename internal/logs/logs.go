@@ -302,8 +302,11 @@ func (b *Bus) Put(runID string, l *Log) {
 	for len(b.order) > b.max {
 		old := b.order[0]
 		b.order = b.order[1:]
-		if l, ok := b.logs[old]; ok {
-			l.Close()
+		if _, ok := b.logs[old]; ok {
+			// Ownership note: the run's exit path closes its own log
+			// (manager.go marks the exit and calls Close), so eviction here
+			// must NOT Close — a run still in flight beyond the 50-entry
+			// window would lose its log file mid-write.
 			delete(b.logs, old)
 		}
 	}
