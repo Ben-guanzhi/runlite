@@ -188,7 +188,11 @@ func (m *Manager) Start(spec StartSpec) (*Run, error) {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("项目 %s 已在运行（%s，pid %d，端口 %d）", p.Name, r.State, r.PID, r.Port)
 	}
-	runID := time.Now().Format("20060102-150405")
+	// Second-granularity IDs collide when two projects start in the same
+	// second (or a fast-fail restart), and bus/history key on the ID — the
+	// later Put silently overwrote the earlier run's log. A monotonic
+	// millisecond component keeps the readable prefix and the uniqueness.
+	runID := time.Now().Format("20060102-150405") + fmt.Sprintf("-%03d", time.Now().Nanosecond()/1e6)
 	r := &Run{
 		RunInfo: RunInfo{
 			ID: runID, ProjectID: p.ID, Name: p.Name, ConfigID: cfg.ID,
