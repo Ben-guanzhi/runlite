@@ -74,11 +74,16 @@ func (m *Manager) mvnClasspath(cfg *project.LaunchConfig, dir, cpFile string) er
 
 // prepareDirectMain 是单 JVM 直跑的准备工作：解析 classpath → 写 argfile → 交出 argv。
 // 这一步要跑 mvn（可能几秒到几十秒），调用方必须保证没有持着 Manager 的全局锁。
-func (m *Manager) prepareDirectMain(cfg *project.LaunchConfig, dir string, extra []string) (*PreparedLaunch, error) {
+//
+// projectID 参与 cpFile/argfile 命名：detect 给每个项目的 direct-main 配置
+// 的 cfg.ID 恒为 "direct-main"，若只按 cfg.ID 命名，两个项目并发 direct-main
+// 启动会共享同一个 classpath 文件——A 的 mvn 写、B 的 mvn 覆盖、A 读到 B 的
+// 依赖清单，静默用错 classpath 跑起来。
+func (m *Manager) prepareDirectMain(cfg *project.LaunchConfig, dir string, projectID string, extra []string) (*PreparedLaunch, error) {
 	if err := os.MkdirAll(m.opt.RunsDir, 0o700); err != nil {
 		return nil, err
 	}
-	cpFile := filepath.Join(m.opt.RunsDir, sanitize(cfg.ID)+"-classpath.txt")
+	cpFile := filepath.Join(m.opt.RunsDir, sanitize(projectID)+"-"+sanitize(cfg.ID)+"-classpath.txt")
 	if err := m.mvnClasspath(cfg, dir, cpFile); err != nil {
 		return nil, err
 	}
@@ -95,7 +100,7 @@ func (m *Manager) prepareDirectMain(cfg *project.LaunchConfig, dir string, extra
 	modRel := plArg(cfg.Args)
 	classesDir := filepath.Join(modRel, "target", "classes")
 
-	argFile := filepath.Join(m.opt.RunsDir, sanitize(cfg.ID)+"-"+time.Now().Format("20060102-150405")+".argfile")
+	argFile := filepath.Join(m.opt.RunsDir, sanitize(projectID)+"-"+sanitize(cfg.ID)+"-"+time.Now().Format("20060102-150405")+".argfile")
 	if err := writeDirectMainArgfile(argFile, classesDir, cp, cfg.MainClass, cfg.Profile, extra); err != nil {
 		return nil, err
 	}

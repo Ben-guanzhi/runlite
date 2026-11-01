@@ -177,7 +177,7 @@ func (m *Manager) Start(spec StartSpec) (*Run, error) {
 	var prepared *PreparedLaunch
 	if cfg.MainClass != "" {
 		var perr error
-		prepared, perr = m.prepareDirectMain(cfg, filepath.FromSlash(p.Dir), spec.Args)
+		prepared, perr = m.prepareDirectMain(cfg, filepath.FromSlash(p.Dir), p.ID, spec.Args)
 		if perr != nil {
 			return nil, perr
 		}

@@ -283,9 +283,18 @@ func (m *Model) tickLogs() tea.Cmd {
 
 // resolveClient reuses a healthy client or dials the daemon; it never touches
 // the model, so it is safe to call from inside a tea.Cmd closure.
+//
+// The liveness probe is an authenticated call (Projects), not the token-free
+// /api/health: after a daemon restart the old client's token is stale, but
+// health still answers — the client was then reused and every subsequent
+// token-gated call 401'd, leaving the TUI stuck on "未连接" forever. A stale
+// token fails Projects, so this path reloads daemon.json and picks up the new
+// token.
 func resolveClient(c *api.Client, spawn func(string, *config.Paths) error) (*api.Client, error) {
-	if c != nil && c.Health() == nil {
-		return c, nil
+	if c != nil {
+		if _, perr := c.Projects(); perr == nil {
+			return c, nil
+		}
 	}
 	return daemon.Client(runliteCLI(), true, spawn)
 }

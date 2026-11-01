@@ -187,10 +187,13 @@ func runliteCLI() string {
 // ensureClient 复用已有连接，探活失败才重读 daemon.json（daemon 重启可能换了端口）。
 // daemon 不在或连不上时，会自动把它拉起来再连——这样双击 GUI 就能用，不必先去终端
 // 敲 runlite daemon start。慢的 spawn/等待放锁外，不阻塞 UI 的其它动作。
+//
+// 探活走带 token 的 Projects 而非免 token 的 /api/health：daemon 重启换 token 后
+// 旧 client 的 health 照样通过，会被复用，之后所有带 token 的调用 401，GUI 卡死。
 func (g *gui) ensureClient() (*api.Client, error) {
 	g.mu.Lock()
 	if g.client != nil {
-		if g.client.Health() == nil {
+		if _, perr := g.client.Projects(); perr == nil {
 			g.mu.Unlock()
 			return g.client, nil
 		}
