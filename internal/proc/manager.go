@@ -839,20 +839,22 @@ func (m *Manager) Reclaim() (adopted int, cleared int) {
 		// 进程可能照旧在跑（本机实测：应用被判"启动超时 failed"，daemon 重启时
 		// 8081 仍在监听）。按标签归档成已结束，等于当场忘掉一个活服务。
 		alive := info.PID != 0 && netx.PidSame(info.PID, info.PidCreated)
-		d := decision{path: path, info: info, adopt: alive}
+		var portFound bool
 		if alive {
 			if info.Port == 0 {
 				// 接管进来的运行没有日志管道可查，端口是外界唯一能确认"它还在服务"的证据：
 				// 直接按 PID 反查监听端口补上，否则 list 只会显示一个空列。
 				if ports := netx.ListeningPortOf([]int{info.PID}); len(ports) > 0 {
 					info.Port = ports[0]
-					d.portFound = true
+					portFound = true
 				}
 			}
 		} else if info.State.Active() && info.EndedAt.IsZero() {
 			info.EndedAt = time.Now()
 		}
-		decisions = append(decisions, d)
+		// 快照必须在回填之后：RunInfo 是值类型，先拷贝会把量到的端口与
+		// 结束时间留在循环变量里，phase 2 写回的 meta 全部丢失这些字段。
+		decisions = append(decisions, decision{path: path, info: info, adopt: alive, portFound: portFound})
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -950,7 +952,13 @@ func pump(r io.Reader, lg *logs.Log, isErr bool) {
 	// pump: every later line from that pipe vanished with no marker. Surface
 	// the truncation so the log shows where reading stopped.
 	if err := sc.Err(); err != nil {
-		lg.Append(isErr, "— 输出读取中断（单行超过缓冲上限），此后的输出已丢弃: "+err.Error()+" —")
+		// ErrTooLong is the buffer case; anything else is an I/O failure —
+		// attributing both to the buffer sent diagnosis down the wrong path.
+		if errors.Is(err, bufio.ErrTooLong) {
+			lg.Append(isErr, "— 输出读取中断（单行超过缓冲上限），此后的输出已丢弃 —")
+		} else {
+			lg.Append(isErr, "— 输出读取中断，此后的输出已丢弃: "+err.Error()+" —")
+		}
 	}
 }
 
