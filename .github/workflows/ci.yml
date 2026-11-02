@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+# runlite manages local processes with Windows-native semantics (taskkill,
+# PID identity checks), so the honest gate is a Windows runner: the tests
+# exercise the same code paths the daemon uses on the dev machine.
+# No `replace` in go.mod — a plain single-repo checkout builds standalone.
+
+jobs:
+  go:
+    name: Go (fmt / vet / build / test / race)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # go.mod declares `go 1.27` (language floor); the tree is formatted with
+      # 1.27.1 — pin the toolchain so the gofmt gate judges with the same
+      # formatter the developers used (see sqltui/dbcore ci.yml rationale).
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+
+      - name: gofmt
+        run: |
+          $unformatted = gofmt -l .
+          if ($unformatted) {
+            Write-Host "gofmt needed for:"
+            $unformatted
+            exit 1
+          }
+
+      - name: vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: |
+          go test -count=1 ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: test -race
+        run: |
+          go test -race -count=1 ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
