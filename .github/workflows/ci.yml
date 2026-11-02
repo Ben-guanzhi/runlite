@@ -46,10 +46,20 @@ jobs:
 
       - name: test
         run: |
-          go test -count=1 ./...
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -count=1 ./... 2>&1 | Tee-Object -Variable out
+          if ($LASTEXITCODE -ne 0) {
+            $out | Select-String '^(--- FAIL|FAIL)' | Select-Object -First 15 | ForEach-Object {
+              Write-Host "::error title=go test::$($_.Line)"
+            }
+            exit $LASTEXITCODE
+          }
 
       - name: test -race
         run: |
-          go test -race -count=1 ./...
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -race -count=1 ./... 2>&1 | Tee-Object -Variable out
+          if ($LASTEXITCODE -ne 0) {
+            $out | Select-String '^(--- FAIL|FAIL|WARNING: DATA RACE)' | Select-Object -First 15 | ForEach-Object {
+              Write-Host "::error title=go test -race::$($_.Line)"
+            }
+            exit $LASTEXITCODE
+          }
