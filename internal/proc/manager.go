@@ -183,6 +183,12 @@ func (m *Manager) Start(spec StartSpec) (*Run, error) {
 		}
 	}
 
+	// The env report can take seconds on a cold cache (Report probes JDK
+	// paths); resolving it inside the critical section would stall every other
+	// Start/Stop/Reclaim on m.mu. It is needed exactly once, when the command
+	// env is built below, so take it before the lock.
+	report := m.report()
+
 	m.mu.Lock()
 	if r, ok := m.active[p.ID]; ok && r.State.Active() {
 		m.mu.Unlock()
@@ -229,7 +235,7 @@ func (m *Manager) Start(spec StartSpec) (*Run, error) {
 
 	cmd := exec.Command(name, args...)
 	cmd.Dir = r.Dir
-	cmd.Env = buildEnv(p.Kind, cfg, m.report())
+	cmd.Env = buildEnv(p.Kind, cfg, report)
 	decorate(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -707,6 +713,23 @@ func (m *Manager) Remove(projectID string) {
 		delete(m.active, projectID)
 	}
 	delete(m.history, projectID)
+	// The .meta.json files must go with the registry entries: Reclaim globs
+	// RunsDir after a daemon restart and re-pushes every meta into history,
+	// so a removed project's runs would come back to life.
+	if m.opt.RunsDir != "" {
+		for _, path := range globMetas(m.opt.RunsDir, sanitize(projectID)) {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+// globMetas lists one project's meta files: sanitize(id)-<runID>.meta.json.
+func globMetas(runsDir, projectID string) []string {
+	matches, err := filepath.Glob(filepath.Join(runsDir, projectID+"-*.meta.json"))
+	if err != nil {
+		return nil
+	}
+	return matches
 }
 
 // Prune 把"记录里还在跑、实际进程对象已不在"的运行标成 zombie。
