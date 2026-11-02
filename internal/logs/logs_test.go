@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"runlite/internal/netx"
 )
 
 // TestReadFileRoundTrip 盯住 daemon 重启后仍能读到日志这条路：
@@ -51,6 +53,12 @@ func TestReadFileRoundTrip(t *testing.T) {
 func TestAppendDecodesGbk(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("GBK 还原只在 Windows 上有意义")
+	}
+	// 还原按系统 ANSI 代码页（CP_ACP）走：ACP=936 才解得回中文。英文区域的
+	// 机器/runner 上产品行为就是 mojibake——探针字节（与断言语料无关）不支持
+	// 则跳过，与 netx.TestDecodeConsole 同一守卫。
+	if got := netx.DecodeConsole("\xd6\xd0\xce\xc4"); got != "中文" {
+		t.Skipf("系统 ACP 非 936，GBK 还原路径不可用（探针还原为 %q）", got)
 	}
 	path := filepath.Join(t.TempDir(), "gbk.log")
 	l, err := Create(path, 10)

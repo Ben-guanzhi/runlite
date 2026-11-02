@@ -110,6 +110,12 @@ func TestPidAliveAfterRealExit(t *testing.T) {
 // TestDecodeConsole 盯住 GBK 还原。这些字节是 JDK 8 和 mvn.cmd 在中文 Windows 的
 // 管道里真会写出来的东西：不转码，日志文件里就是一屏乱码。
 func TestDecodeConsole(t *testing.T) {
+	// 还原按系统 ANSI 代码页（CP_ACP）走：只有 ACP=936（简中）的机器上 GBK
+	// 字节才解得回中文。英文区域的机器/runner 上产品行为就是 mojibake——
+	// 用与下方断言语料无关的探针字节探测区域支持，不支持则跳过。
+	if got := DecodeConsole("\xd6\xd0\xce\xc4"); got != "中文" {
+		t.Skipf("系统 ACP 非 936，GBK 还原路径不可用（探针还原为 %q）", got)
+	}
 	gbk := "\xd5\xe2\xca\xc7\xd2\xbb\xcc\xf5\xc2\xeb\xc1\xf7" // GBK 的“这是一条码流”
 	if got := DecodeConsole(gbk); got != "这是一条码流" {
 		t.Errorf("GBK 没还原成 UTF-8：got %q want %q", got, "这是一条码流")
