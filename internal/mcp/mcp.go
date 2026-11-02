@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -69,14 +70,78 @@ const (
 	codeInternalErr = -32603
 )
 
+// maxLine caps one input line at 4MB. An oversized line is discarded with a
+// parse-error reply instead of killing the server: a bufio.Scanner stops at
+// the first over-limit line and its ErrTooLong would propagate out of Serve,
+// ending the whole MCP process — one fat message took the server down.
+const maxLine = 4 << 20
+
+// errLineTooLong marks a line that exceeded maxLine and was discarded.
+var errLineTooLong = errors.New("input line too long")
+
+// readLine reads one newline-terminated line, dropping any line longer than
+// maxLine. It returns (line, true, nil) for a normal line, (nil, true,
+// errLineTooLong) when the current line was too long, and (nil, false, err)
+// at end of input (err is io.EOF, or a read failure).
+func readLine(br *bufio.Reader) (line []byte, ok bool, err error) {
+	var buf []byte
+	for {
+		chunk, rerr := br.ReadSlice('\n')
+		buf = append(buf, chunk...)
+		switch rerr {
+		case nil:
+			return buf, true, nil
+		case bufio.ErrBufferFull:
+			if len(buf) > maxLine {
+				// Discard the remainder of the oversized line, then report it.
+				for {
+					if _, derr := br.ReadSlice('\n'); derr == nil {
+						break
+					} else if derr != bufio.ErrBufferFull {
+						break // EOF or a real error: end of input
+					}
+				}
+				return nil, true, errLineTooLong
+			}
+			continue
+		case io.EOF:
+			if len(buf) > 0 {
+				return buf, true, nil // last line without a trailing newline
+			}
+			return nil, false, io.EOF
+		default:
+			return nil, false, rerr
+		}
+	}
+}
+
 // Serve 逐行读 stdin、逐行写 stdout，直到输入结束（Agent 关掉管道就是退出信号）。
 // stderr 留给人/日志，不参与协议。
 func Serve(in io.Reader, out io.Writer, b Backend) error {
-	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	br := bufio.NewReaderSize(in, 64*1024)
 	enc := json.NewEncoder(out)
-	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
+	for {
+		line, ok, err := readLine(br)
+		if err != nil {
+			if errors.Is(err, errLineTooLong) {
+				// The line was never read, so there is no id to answer: send a
+				// bare parse error and keep serving the rest of the stream.
+				resp := rpcResponse{JSONRPC: "2.0",
+					Error: &rpcError{Code: codeParseError, Message: "输入行超过长度上限，已丢弃"}}
+				if err := enc.Encode(resp); err != nil {
+					return err
+				}
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
 		}
@@ -88,7 +153,6 @@ func Serve(in io.Reader, out io.Writer, b Backend) error {
 			return err
 		}
 	}
-	return sc.Err()
 }
 
 func handle(raw []byte, b Backend) (rpcResponse, bool) {

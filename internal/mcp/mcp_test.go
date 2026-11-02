@@ -277,3 +277,37 @@ func TestReadLogsAndStopShape(t *testing.T) {
 		t.Errorf("remove 转发的键 = %q", f.removeKey)
 	}
 }
+
+// TestServeSurvivesOversizedLine：一条超过 4MB 的输入行曾经让 Serve 直接返回
+// ErrTooLong，整个 MCP 进程退出——一条胖消息就能打死服务。现在超限行被丢弃并
+// 回一条解析错误，后面的合法请求照常服务。
+func TestServeSurvivesOversizedLine(t *testing.T) {
+	fat := strings.Repeat("x", maxLine+1)
+	var in strings.Builder
+	in.WriteString(`{"jsonrpc":"2.0","id":"req-1","method":"ping"}` + "\n")
+	in.WriteString(fat + "\n")
+	in.WriteString(`{"jsonrpc":"2.0","id":"req-2","method":"ping"}` + "\n")
+
+	var out strings.Builder
+	if err := Serve(strings.NewReader(in.String()), &out, &fake{}); err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("输出 %d 行: %q, 期望 ping + 解析错误 + ping", len(lines), out.String())
+	}
+	var parseErr map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &parseErr); err != nil {
+		t.Fatalf("第二行不是合法 JSON（%v）：%s", err, lines[1])
+	}
+	if code, _ := parseErr["error"].(map[string]any)["code"].(float64); code != codeParseError {
+		t.Errorf("超限行响应 = %v, 期望 code=%d 的解析错误", lines[1], codeParseError)
+	}
+	var last map[string]any
+	if err := json.Unmarshal([]byte(lines[2]), &last); err != nil {
+		t.Fatalf("第三行不是合法 JSON（%v）：%s", err, lines[2])
+	}
+	if last["id"] != "req-2" {
+		t.Errorf("超限行之后的服务被打断: 第三行 = %s", lines[2])
+	}
+}
