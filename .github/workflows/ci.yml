@@ -30,6 +30,11 @@ jobs:
           if ($unformatted) {
             Write-Host "gofmt needed for:"
             $unformatted
+            # Annotations survive the step-summary 10-item cap poorly, but a
+            # plain failure without them is unreadable in the UI.
+            $unformatted | Select-Object -First 15 | ForEach-Object {
+              Write-Host "::error file=$_ title=gofmt::file needs gofmt -w"
+            }
             exit 1
           }
 

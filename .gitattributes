@@ -1,0 +1,4 @@
+# Line endings: the index stores LF; every platform (including Windows CI)
+# checks out LF so gofmt judges content, not line endings. Without this,
+# windows-latest honors core.autocrlf and gofmt -l flags every CRLF file.
+* text=auto eol=lf
