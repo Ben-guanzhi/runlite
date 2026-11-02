@@ -2,6 +2,7 @@
 package env
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -196,31 +197,28 @@ func probe(name, bin string, vf func(string) ([]string, string), overrides map[s
 	return t
 }
 
-func javaVersionArgs(string) ([]string, string)   { return []string{"-version"}, "JAVA_HOME" }
-func simpleVersionArgs(string) ([]string, string) { return []string{"--version"}, "" }
+func javaVersionArgs(string) ([]string, string) { return []string{"-version"}, "JAVA_HOME" }
 
 func versionFlag(flag string) func(string) ([]string, string) {
 	return func(string) ([]string, string) { return []string{flag}, "" }
 }
 
+// runCmd probes one tool's version with a hard timeout. The probe must not
+// outlive its timeout: an abandoned mvn/gradle/node keeps running (and holds
+// its daemon) long after the doctor moved on, so the context kills it.
 func runCmd(bin string, args []string, timeout time.Duration) string {
-	done := make(chan string, 1)
-	go func() {
-		cmd := exec.Command(bin, args...)
-		cmd.Env = append(os.Environ(), "MAVEN_OPTS=", "GRADLE_OPTS=-Dorg.gradle.daemon=false")
-		out, err := cmd.CombinedOutput()
-		if err != nil && len(out) == 0 {
-			done <- ""
-			return
-		}
-		done <- string(out)
-	}()
-	select {
-	case s := <-done:
-		return s
-	case <-time.After(timeout):
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append(os.Environ(), "MAVEN_OPTS=", "GRADLE_OPTS=-Dorg.gradle.daemon=false")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return "" // timed out: a half-finished probe is not a verdict
+	}
+	if err != nil && len(out) == 0 {
 		return ""
 	}
+	return string(out)
 }
 
 func firstLine(s string) string {
